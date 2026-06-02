@@ -162,8 +162,12 @@ class CARLDiagnostics:
         xobs_denominator = xobs[den_mask]
         w_numerator = weights[num_mask]
         w_denominator = weights[den_mask]
-        pred_den = np.clip(scores[den_mask], 1e-8, 1.0 - 1e-8)
-        r_denominator = pred_den / (1.0 - pred_den)
+        pred_den = np.clip(scores[den_mask], 1e-6, 1.0 - 1e-6)
+
+        log_r_denominator = np.log(pred_den) - np.log1p(-pred_den)
+        log_r_denominator = np.clip(log_r_denominator, -20.0, 20.0)
+
+        r_denominator = np.exp(log_r_denominator)
 
         xmin, xmax = np.min(xobs), np.max(xobs)
         xbins = np.linspace(xmin, xmax, n_xbins + 1)

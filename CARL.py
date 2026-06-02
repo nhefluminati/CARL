@@ -160,7 +160,7 @@ class CARL(light.LightningModule):
         y = y.flatten()
         w = w.flatten()
 
-        # Validation BCE. This is now the actual val_loss used for checkpointing.
+        # Validation BCE
         val_loss = (self.loss_fn(y_hat, y) * w).sum() / w.sum()
 
         self.log(
@@ -172,7 +172,7 @@ class CARL(light.LightningModule):
             sync_dist=True,
         )
 
-        # Keep buffers for the NSBI normalization diagnostic.
+        # Keep buffers for the NSBI normalization diagnostic
         self._val_preds.append(y_hat.detach())
         self._val_targets.append(y.detach())
         self._val_weights.append(w.detach())
@@ -208,7 +208,6 @@ class CARL(light.LightningModule):
         log_r_ref = torch.logit(preds_ref)
 
         # Prevent pathological overflow in exp(log_r).
-        # exp(20) ~ 4.85e8, already enormous.
         log_r_ref = torch.clamp(log_r_ref, min=-20.0, max=20.0)
 
         r_ref = torch.exp(log_r_ref)

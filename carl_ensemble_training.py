@@ -74,7 +74,7 @@ class CARLEnsembleTrainer:
 
         dataset = self.base_dataset.clone_with_fresh_weights()
         bootstrap_idx = CARLPreprocessor.make_bootstrap_indices(self.base_train_idx, seed=seed, bootstrap_fraction=bootstrap_fraction)
-        CARLPreprocessor.rebalance_training_weights(dataset, bootstrap_idx, test_indices=self.val_idx, verbose=True)
+        CARLPreprocessor.rebalance_training_weights(dataset, bootstrap_idx, verbose=True)
         train_loader, val_loader = CARLPreprocessor.make_loaders(
             dataset,
             bootstrap_idx,

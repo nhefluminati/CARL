@@ -72,6 +72,8 @@ class CARLPreprocessor:
             features_target = np.stack([f_target[k][:] for k in keys_target], axis=1)
             weights_target = f_target["weight"][:].astype(np.float64)
 
+        
+        weights_target = weights_target / weights_target.sum()
         feature_names = keys_target
 
         features_ref_list = []
@@ -150,7 +152,6 @@ class CARLPreprocessor:
     def rebalance_training_weights(
         dataset: NSBIDataset,
         train_indices: np.ndarray,
-        test_indices: np.ndarray | None = None,
         verbose: bool = True,
     ) -> None:
         # Bootstrap multiplicities enter the train-yield estimate.
@@ -179,18 +180,6 @@ class CARLPreprocessor:
             train_indices_t[train_reference_mask]
         )
         dataset.w[unique_ref_indices_train] *= reference_scale
-
-        # Optional: also scale reference events in the test/validation set
-        # with the same factor.
-        if test_indices is not None:
-            test_indices_t = torch.as_tensor(test_indices, dtype=torch.long)
-            y_test = dataset.y[test_indices_t].flatten()
-            test_reference_mask = y_test == 0.0
-
-            unique_ref_indices_test = torch.unique(
-                test_indices_t[test_reference_mask]
-            )
-            dataset.w[unique_ref_indices_test] *= reference_scale
 
         if verbose:
             y_after = dataset.y[train_indices_t].flatten()
