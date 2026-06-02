@@ -201,12 +201,23 @@ class CARL(light.LightningModule):
         preds_ref = preds[ref_mask]
         weights_ref = weights[ref_mask]
 
-        eps = 1e-8
+        eps = 1e-6
+
         preds_ref = torch.clamp(preds_ref, eps, 1.0 - eps)
 
-        r_ref = preds_ref / (1.0 - preds_ref)
+        log_r_ref = torch.logit(preds_ref)
+
+        # Prevent pathological overflow in exp(log_r).
+        # exp(20) ~ 4.85e8, already enormous.
+        log_r_ref = torch.clamp(log_r_ref, min=-20.0, max=20.0)
+
+        r_ref = torch.exp(log_r_ref)
 
         val_norm = torch.sum(r_ref * weights_ref) / torch.sum(weights_ref)
+
+        if not torch.isfinite(val_norm):
+            val_norm = torch.tensor(float("nan"), device=self.device)
+
         val_norm_loss = torch.abs(1.0 - val_norm)
 
         self.log(
