@@ -74,7 +74,7 @@ class CARLEnsembleTrainer:
 
         dataset = self.base_dataset.clone_with_fresh_weights()
         bootstrap_idx = CARLPreprocessor.make_bootstrap_indices(self.base_train_idx, seed=seed, bootstrap_fraction=bootstrap_fraction)
-        CARLPreprocessor.rebalance_training_weights(dataset, bootstrap_idx, verbose=True)
+        reference_scale = CARLPreprocessor.rebalance_training_weights(dataset, bootstrap_idx, verbose=True)
         train_loader, val_loader = CARLPreprocessor.make_loaders(
             dataset,
             bootstrap_idx,
@@ -121,6 +121,7 @@ class CARLEnsembleTrainer:
             "seed": seed,
             "gpu_id": gpu_id,
             "checkpoint": ckpt_path,
+            "reference_scale": reference_scale,
             "train_loss": loss_history.train_loss,
             "val_loss": loss_history.val_loss,
             "val_norm": loss_history.val_norm,
@@ -139,17 +140,55 @@ class CARLEnsembleTrainer:
         self._write_manifest(summaries)
         return summaries
 
-    def train_parallel(self, n_members: int, seed: int, gpu_ids: list[int] | None, bootstrap_fraction: float = 1.0) -> list[dict]:
+    def train_parallel(
+        self,
+        n_members: int,
+        seed: int,
+        gpu_ids: list[int] | None,
+        bootstrap_fraction: float = 1.0,
+        workers_per_gpu: int = 1,
+        max_parallel_members: int | None = None,
+    ) -> list[dict]:
+        """Train ensemble members concurrently.
+
+        workers_per_gpu controls how many independent CARL networks are
+        trained simultaneously on each visible GPU. For example, with
+        gpu_ids=[0, 1, 2, 3] and workers_per_gpu=2 the scheduler starts
+        up to eight independent training processes at once:
+
+            GPU 0: members 0, 4, ...
+        """
+        workers_per_gpu = int(workers_per_gpu)
+        if workers_per_gpu < 1:
+            raise ValueError("workers_per_gpu must be >= 1")
 
         if gpu_ids is None or len(gpu_ids) == 0:
             # CPU training is intentionally kept serial to avoid oversubscribing cores/RAM.
             return self.train_sequential(n_members, seed, gpu_ids=None, bootstrap_fraction=bootstrap_fraction)
 
-        max_workers = min(n_members, len(gpu_ids))
+        # Repeat each GPU ID workers_per_gpu times. ProcessPoolExecutor then
+        # keeps at most one queued job per slot active, so multiple independent
+        # members can share a GPU when requested.
+        gpu_slots = []
+        for gpu_id in gpu_ids:
+            gpu_slots.extend([gpu_id] * workers_per_gpu)
+
+        if max_parallel_members is None:
+            max_workers = min(n_members, len(gpu_slots))
+        else:
+            max_workers = min(n_members, len(gpu_slots), int(max_parallel_members))
+            if max_workers < 1:
+                raise ValueError("max_parallel_members must be >= 1 when provided")
+
         assignments = [
-            (member_id, seed + member_id, gpu_ids[member_id % len(gpu_ids)])
+            (member_id, seed + member_id, gpu_slots[member_id % len(gpu_slots)])
             for member_id in range(n_members)
         ]
+
+        print(
+            f"Training {n_members} ensemble members with up to {max_workers} concurrent "
+            f"workers on GPUs {gpu_ids} ({workers_per_gpu} worker(s)/GPU)."
+        )
 
         # Use spawn rather than fork because CUDA + fork is unsafe once CUDA has
         # been initialized anywhere in the parent process.

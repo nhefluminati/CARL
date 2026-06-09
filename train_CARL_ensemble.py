@@ -22,6 +22,8 @@ def main():
     parser.add_argument("--backgrounds", type=str, nargs="+", required=True, help="One or more background/reference h5 files.")
     parser.add_argument("--gpus", type=int, nargs="*", default=None, help="GPU IDs to use round-robin, e.g. --gpus 0 1 2 3. Use --gpus -1 for CPU.")
     parser.add_argument("--n-ensemble", type=int, default=10, help="Number of bootstrap ensemble members.")
+    parser.add_argument("--workers-per-gpu", type=int, default=1, help="Number of independent ensemble members to train concurrently on each GPU. Increase only if GPU memory allows it.")
+    parser.add_argument("--max-parallel-members", type=int, default=None, help="Optional global cap on concurrently training ensemble members.")
     parser.add_argument("--seed", type=int, default=52, help="Base random seed. Member i uses seed+i.")
     parser.add_argument("--train-fraction", type=float, default=0.8)
     parser.add_argument("--bootstrap-fraction", type=float, default=1.0, help="Bootstrap sample size as a fraction of the nominal training set.")
@@ -75,14 +77,16 @@ def main():
         seed=args.seed,
         gpu_ids=gpus,
         bootstrap_fraction=args.bootstrap_fraction,
+        workers_per_gpu=args.workers_per_gpu,
+        max_parallel_members=args.max_parallel_members,
     )
 
-    # Run diagnostics once
-    
+    # Diagnostics are intentionally only run once, on the finished ensemble.
     manifest_path = output_dir / f"ensemble_manifest_{args.name}.json"
     pred_gpu = args.predict_gpu if args.predict_gpu is not None else (gpus[0] if gpus else None)
     pred_device = f"cuda:{pred_gpu}" if torch.cuda.is_available() and pred_gpu is not None else "cpu"
-    models, _ = CARLEnsembleTrainer.load_ensemble_from_manifest(manifest_path, map_location=pred_device)
+    models, manifest = CARLEnsembleTrainer.load_ensemble_from_manifest(manifest_path, map_location=pred_device)
+    reference_scales = [float(member.get("reference_scale", 1.0)) for member in manifest["members"]]
 
     # Validation weights are untouched holdout weights, matching the original script's validation semantics.
     _, val_loader = CARLPreprocessor.make_loaders(
@@ -94,13 +98,17 @@ def main():
         num_workers=args.num_workers,
         pin_memory=torch.cuda.is_available(),
     )
-    predictions = EnsemblePredictor(models, device=pred_device).predict_mean_and_members(val_loader)
+    predictions = EnsemblePredictor(
+        models,
+        device=pred_device,
+        reference_scales=reference_scales,
+    ).predict_mean_and_members(val_loader)
     diagnostics = CARLDiagnostics(args.name, output_dir=output_dir)
     diagnostics.plot_training_diagnostics(histories)
     diagnostics.plot_roc(predictions["scores_mean"], predictions["labels"], predictions["weights"])
     diagnostics.plot_calibration(predictions["scores_mean"], predictions["labels"], predictions["weights"])
     diagnostics.plot_reweighting_closure(
-        scores=predictions["scores_mean"],
+        r_mean=predictions["r_mean"],
         labels=predictions["labels"],
         weights=predictions["weights"],
         features_scaled=predictions["features"],
@@ -109,7 +117,7 @@ def main():
         std=base_dataset.std,
         feature_name=args.diagnostic_feature,
     )
-    diagnostics.write_member_spread(predictions["scores_members"])
+    diagnostics.write_member_spread(predictions["scores_members"], predictions["r_members"])
 
 
 if __name__ == "__main__":

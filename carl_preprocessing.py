@@ -57,6 +57,9 @@ class SplitIndices:
 
 
 class CARLPreprocessor:
+    """Loads HDF5 templates and reproduces preprocessing.
+
+    """
 
     def __init__(self, signal_path: str, background_paths: list[str] | tuple[str, ...], run_name: str):
         self.signal_path = signal_path
@@ -72,7 +75,6 @@ class CARLPreprocessor:
             features_target = np.stack([f_target[k][:] for k in keys_target], axis=1)
             weights_target = f_target["weight"][:].astype(np.float64)
 
-        
         weights_target = weights_target / weights_target.sum()
         feature_names = keys_target
 
@@ -149,53 +151,32 @@ class CARLPreprocessor:
         return rng.choice(train_idx, size=n, replace=True)
 
     @staticmethod
-    def rebalance_training_weights(
-        dataset: NSBIDataset,
-        train_indices: np.ndarray,
-        verbose: bool = True,
-    ) -> None:
-        # Bootstrap multiplicities enter the train-yield estimate.
+    def rebalance_training_weights(dataset: NSBIDataset, train_indices: np.ndarray, verbose: bool = True) -> float:
+        # Uses duplicate entries in train_indices, so bootstrap multiplicities enter the yield estimate.
         train_indices_t = torch.as_tensor(train_indices, dtype=torch.long)
-
         y_train = dataset.y[train_indices_t].flatten()
         w_train = dataset.w[train_indices_t].flatten()
-
-        train_target_mask = y_train == 1.0
-        train_reference_mask = y_train == 0.0
-
-        target_yield = w_train[train_target_mask].sum()
-        reference_yield = w_train[train_reference_mask].sum()
-
+        target_mask = y_train == 1.0
+        reference_mask = y_train == 0.0
+        target_yield = w_train[target_mask].sum()
+        reference_yield = w_train[reference_mask].sum()
         if target_yield <= 0 or reference_yield <= 0:
-            raise ValueError(
-                "Cannot rebalance training weights: target and reference yields "
-                "must both be positive."
-            )
+            raise ValueError("Cannot rebalance training weights: target and reference yields must both be positive.")
 
         reference_scale = target_yield / reference_yield
-
-        # Scale each stored event only once, even if it appears multiple times
-        # in the bootstrap sample.
-        unique_ref_indices_train = torch.unique(
-            train_indices_t[train_reference_mask]
-        )
-        dataset.w[unique_ref_indices_train] *= reference_scale
+        unique_ref_indices = torch.unique(train_indices_t[reference_mask])
+        dataset.w[unique_ref_indices] *= reference_scale
 
         if verbose:
             y_after = dataset.y[train_indices_t].flatten()
             w_after = dataset.w[train_indices_t].flatten()
-
             print("Training target yield before rebalancing:", target_yield.item())
             print("Training reference yield before rebalancing:", reference_yield.item())
-            print("Applied reference weight scale:", reference_scale.item())
-            print(
-                "Training target yield after rebalancing:",
-                w_after[y_after == 1.0].sum().item(),
-            )
-            print(
-                "Training reference yield after rebalancing:",
-                w_after[y_after == 0.0].sum().item(),
-            )
+            print("Applied train-only reference weight scale:", reference_scale.item())
+            print("Training target yield after rebalancing:", w_after[y_after == 1.0].sum().item())
+            print("Training reference yield after rebalancing:", w_after[y_after == 0.0].sum().item())
+
+        return float(reference_scale.detach().cpu().item())
 
     @staticmethod
     def make_loaders(
