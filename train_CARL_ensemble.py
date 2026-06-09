@@ -8,6 +8,11 @@ from carl_preprocessing import CARLPreprocessor
 from carl_ensemble_training import CARLEnsembleTrainer, ModelConfig, TrainingConfig
 from carl_diagnostics import CARLDiagnostics, EnsemblePredictor
 
+import os
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
 def parse_gpus(gpu_args: list[int] | None) -> list[int] | None:
     if gpu_args is None or len(gpu_args) == 0 or gpu_args == [-1]:

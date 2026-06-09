@@ -61,6 +61,8 @@ class CARLEnsembleTrainer:
         self.training_config = training_config
 
     def train_member(self, member_id: int, seed: int, gpu_id: int | None, bootstrap_fraction: float = 1.0) -> dict:
+        torch.set_num_threads(1)
+        torch.set_num_interop_threads(1)
         light.seed_everything(seed, workers=True)
         random.seed(seed)
         np.random.seed(seed)
@@ -152,11 +154,7 @@ class CARLEnsembleTrainer:
         """Train ensemble members concurrently.
 
         workers_per_gpu controls how many independent CARL networks are
-        trained simultaneously on each visible GPU. For example, with
-        gpu_ids=[0, 1, 2, 3] and workers_per_gpu=2 the scheduler starts
-        up to eight independent training processes at once:
-
-            GPU 0: members 0, 4, ...
+        trained simultaneously on each visible GPU. 
         """
         workers_per_gpu = int(workers_per_gpu)
         if workers_per_gpu < 1:

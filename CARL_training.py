@@ -109,7 +109,7 @@ def rebalance_training_weights(dataset: NSBIDataset, train_indices: np.ndarray) 
 
     This keeps validation/test weights unchanged, while ensuring that the actual
     sampled training subset passed to the classifier has equal weighted target
-    and reference yields, as required for NSBI/CARL-style classification.
+    and reference yields
     """
     train_indices_t = torch.as_tensor(train_indices, dtype=torch.long)
 
