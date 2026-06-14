@@ -98,18 +98,13 @@ class CARLPreprocessor:
         y = np.concatenate([np.ones(len(weights_target)), np.zeros(len(weights_ref))]).reshape(-1, 1)
         w = np.concatenate([weights_target, weights_ref]).reshape(-1, 1)
 
-        mean = x.mean(axis=0)
-        std = x.std(axis=0)
-        std[std == 0] = 1.0
-        x = (x - mean) / std
+        # Do not fit/apply the feature scaler here. To match the old toolkit,
+        # the train/validation split is created first and the scaler is fitted
+        # on the training subset only. Placeholder values are overwritten by
+        # fit_scaler_on_train_and_transform(...).
+        mean = np.zeros(x.shape[1], dtype=np.float64)
+        std = np.ones(x.shape[1], dtype=np.float64)
 
-        np.savetxt(output_dir / f"mean_{self.run_name}.csv", mean, delimiter=";")
-        np.savetxt(output_dir / f"std_{self.run_name}.csv", std, delimiter=";")
-
-        print("Mean:")
-        print(mean)
-        print("STD:")
-        print(std)
         print("Signal weight sum before train-only rebalancing:", weights_target.sum())
         print("Total background weight sum before train-only rebalancing:", weights_ref.sum())
 
@@ -149,6 +144,43 @@ class CARLPreprocessor:
             raise ValueError("bootstrap_fraction gives zero sampled events.")
         rng = np.random.default_rng(seed)
         return rng.choice(train_idx, size=n, replace=True)
+
+    @staticmethod
+    def fit_scaler_on_train_and_transform(
+        dataset: NSBIDataset,
+        train_idx: np.ndarray,
+        output_dir: str | Path = ".",
+        run_name: str = "default",
+    ) -> NSBIDataset:
+        """Fit mean/std on the nominal training subset and scale all events.
+
+        This matches the old toolkit logic: split first, fit the scaler only on
+        training events, then transform both training and validation events with
+        that scaler. The scaler is shared by all bootstrap ensemble members.
+        """
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+
+        train_idx_t = torch.as_tensor(train_idx, dtype=torch.long)
+        x_train = dataset.x[train_idx_t]
+
+        mean_t = x_train.mean(dim=0)
+        std_t = x_train.std(dim=0, unbiased=False)
+        std_t = torch.where(std_t < 1e-8, torch.ones_like(std_t), std_t)
+
+        dataset.x = (dataset.x - mean_t) / std_t
+        dataset.mean = mean_t.detach().cpu().numpy().astype(np.float64)
+        dataset.std = std_t.detach().cpu().numpy().astype(np.float64)
+
+        np.savetxt(output_dir / f"mean_{run_name}.csv", dataset.mean, delimiter=";")
+        np.savetxt(output_dir / f"std_{run_name}.csv", dataset.std, delimiter=";")
+
+        print("Mean fitted on training subset:")
+        print(dataset.mean)
+        print("STD fitted on training subset:")
+        print(dataset.std)
+
+        return dataset
 
     @staticmethod
     def rebalance_training_weights(dataset: NSBIDataset, train_indices: np.ndarray, verbose: bool = True) -> float:
@@ -196,7 +228,7 @@ class CARLPreprocessor:
             shuffle=True,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            persistent_workers=num_workers > 0,
+            persistent_workers=False,
         )
         val_loader = DataLoader(
             val_data,
@@ -204,6 +236,6 @@ class CARLPreprocessor:
             shuffle=False,
             num_workers=num_workers,
             pin_memory=pin_memory,
-            persistent_workers=num_workers > 0,
+            persistent_workers=False,
         )
         return train_loader, val_loader

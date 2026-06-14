@@ -9,6 +9,7 @@ class LossHistory(light.Callback):
         self.train_loss = []
         self.val_loss = []
         self.val_norm = []
+        self.val_norm_loss = []
 
     def on_train_epoch_end(self, trainer, pl_module):
         if "train_loss" in trainer.callback_metrics:
@@ -19,6 +20,8 @@ class LossHistory(light.Callback):
             self.val_loss.append(trainer.callback_metrics["val_loss"].item())
         if "val_norm" in trainer.callback_metrics:
             self.val_norm.append(trainer.callback_metrics["val_norm"].item())
+        if "val_norm_loss" in trainer.callback_metrics:
+            self.val_norm_loss.append(trainer.callback_metrics["val_norm_loss"].item())
 
 
 class CARL(light.LightningModule):
@@ -52,22 +55,9 @@ class CARL(light.LightningModule):
         self._val_targets = []
         self._val_weights = []
 
-        def gaussian_init(var: float):
-            std = var ** 0.5
-            def _init(m):
-                if isinstance(m, nn.Linear):
-                    nn.init.normal_(m.weight, mean=0.0, std=std)
-                    if m.bias is not None:
-                        m.bias.data.zero_()
-            return _init
-
-        def xavier_init(m):
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    m.bias.data.zero_()
-
-        self.model.apply(xavier_init if xavier else gaussian_init(init_variance))
+        # Use PyTorch's default nn.Linear initialization, matching the old toolkit.
+        # The init_variance/xavier arguments are kept for checkpoint/backward compatibility
+        # but are intentionally ignored.
 
     def configure_callbacks(self):
         callbacks = super().configure_callbacks()
@@ -100,10 +90,26 @@ class CARL(light.LightningModule):
         x, y, w = batch
         y_hat = self.model(x).flatten()
         y_hat = torch.clamp(y_hat, 1e-8, 1.0 - 1e-8)
+        y = y.flatten()
+        w = w.flatten()
+
+        # Match the training objective: weighted BCE normalized by the
+        # sum of weights in the batch.
+        val_loss = (self.loss_fn(y_hat, y) * w).sum() / w.sum()
+        self.log(
+            "val_loss",
+            val_loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=True,
+            sync_dist=True,
+        )
+
+        # Keep buffers for the separate NSBI normalization diagnostic.
         self._val_preds.append(y_hat.detach())
-        self._val_targets.append(y.flatten().detach())
-        self._val_weights.append(w.flatten().detach())
-        return None
+        self._val_targets.append(y.detach())
+        self._val_weights.append(w.detach())
+        return val_loss
 
     def on_validation_epoch_end(self):
         if len(self._val_preds) == 0:
@@ -125,10 +131,10 @@ class CARL(light.LightningModule):
         weights_ref = weights[ref_mask]
         r_ref = preds_ref / (1.0 - preds_ref)
         norm_result = torch.sum(r_ref * weights_ref) / torch.sum(weights_ref)
-        val_objective = torch.abs(1.0 - norm_result)
+        val_norm_loss = torch.abs(1.0 - norm_result)
 
-        self.log("val_loss", val_objective, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
         self.log("val_norm", norm_result, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
+        self.log("val_norm_loss", val_norm_loss, on_step=False, on_epoch=True, prog_bar=True, sync_dist=True)
 
         self._val_preds.clear()
         self._val_targets.clear()

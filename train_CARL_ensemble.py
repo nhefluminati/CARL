@@ -54,6 +54,12 @@ def main():
     preprocessor = CARLPreprocessor(args.signal, tuple(args.backgrounds), args.name)
     base_dataset = preprocessor.load_dataset(output_dir=output_dir)
     split = preprocessor.make_train_val_split(base_dataset, train_fraction=args.train_fraction, split_seed=args.seed)
+    base_dataset = CARLPreprocessor.fit_scaler_on_train_and_transform(
+        base_dataset,
+        split.train_idx,
+        output_dir=output_dir,
+        run_name=args.name,
+    )
 
     model_config = ModelConfig(
         n_layers=args.n_layers,

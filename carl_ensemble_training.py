@@ -61,8 +61,10 @@ class CARLEnsembleTrainer:
         self.training_config = training_config
 
     def train_member(self, member_id: int, seed: int, gpu_id: int | None, bootstrap_fraction: float = 1.0) -> dict:
-        torch.set_num_threads(1)
-        torch.set_num_interop_threads(1)
+        try:
+            torch.set_num_threads(1)
+        except RuntimeError:
+            pass
         light.seed_everything(seed, workers=True)
         random.seed(seed)
         np.random.seed(seed)
@@ -127,6 +129,7 @@ class CARLEnsembleTrainer:
             "train_loss": loss_history.train_loss,
             "val_loss": loss_history.val_loss,
             "val_norm": loss_history.val_norm,
+            "val_norm_loss": getattr(loss_history, "val_norm_loss", []),
             "n_bootstrap_events": int(len(bootstrap_idx)),
         }
         with open(member_dir / "history.json", "w") as f:
